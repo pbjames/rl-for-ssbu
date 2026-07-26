@@ -12,4 +12,5 @@ dependencies = [
 ]
 
 [tool.pyright]
-reportUnknownMemberType = "none"
+# reportUnknownMemberType = "none"
+reportUnusedCallResult = "none"
