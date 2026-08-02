@@ -1,20 +1,21 @@
 import asyncio
-from enum import StrEnum
+from enum import Enum
 from typing import final
 
-from msgspec.msgpack import Decoder
-from structs import Message
 import msgspec
+from msgspec.msgpack import Decoder
+
+from structs import Message
 
 
-class InfoEvent(StrEnum):
+class InfoEvent(Enum):
     CPU_KO = "cpu_ko"
     OPP_KO = "opp_ko"
     GAME_OVER = "game_over"
     STATE_CHANGE = "state_change"
 
 
-EventQueue = asyncio.Queue[InfoEvent]
+EventQueue = asyncio.Queue[tuple[InfoEvent, Message]]
 
 
 @final
@@ -31,29 +32,30 @@ class InfoServer:
     def unsubscribe(self, q: EventQueue):
         self._subscribers.remove(q)
 
+    async def publish(self, event: InfoEvent, state: Message):
+        for q in self._subscribers:
+            await q.put((event, state))
+
     async def process_new_state(self, new_state: Message):
+        await self.handle_conditional_events(new_state)
+        self.state = new_state
+        await self.publish(InfoEvent.STATE_CHANGE, new_state)
+
+    async def handle_conditional_events(self, new_state: Message):
         if self.state is None:
-            self.state = new_state
-            await self.publish(InfoEvent.STATE_CHANGE)
             return
         if (
             self.state.cpu.situation != "Outfield"
             and new_state.cpu.situation == "Outfield"
         ):
-            await self.publish(InfoEvent.CPU_KO)
+            await self.publish(InfoEvent.CPU_KO, new_state)
         if (
             self.state.opp.situation != "Outfield"
             and new_state.opp.situation == "Outfield"
         ):
-            await self.publish(InfoEvent.OPP_KO)
+            await self.publish(InfoEvent.OPP_KO, new_state)
         if self.state.stage != 310 and new_state.stage == 310:
-            await self.publish(InfoEvent.GAME_OVER)
-        self.state = new_state
-        await self.publish(InfoEvent.STATE_CHANGE)
-
-    async def publish(self, event: InfoEvent):
-        for q in self._subscribers:
-            await q.put(event)
+            await self.publish(InfoEvent.GAME_OVER, new_state)
 
     async def handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

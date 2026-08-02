@@ -3,6 +3,8 @@ from msgspec import Struct
 import msgspec
 
 Location = tuple[float, float, float]
+Primitive = float | Location | str | bool | int
+StructDiff = tuple[*tuple[str, ...], tuple[Primitive, Primitive]]
 
 
 class Message(Struct, array_like=True):
@@ -15,7 +17,6 @@ class Fighter(Struct, array_like=True):
     location: Location
     damage: float
     is_shield: bool
-    shield_strength: float
     attack: Attack
     grounded_ke: Location
     situation: str

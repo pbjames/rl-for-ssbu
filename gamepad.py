@@ -1,70 +1,82 @@
+from enum import Enum
 from typing import Final
 
 import vgamepad as vg  # pyright: ignore[reportMissingTypeStubs]
 import time
 
-# fmt: off
-from vgamepad.win.vigem_commons import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs]
-# fmt: on
+from vgamepad.win.vigem_commons import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs] fmt: skip
 
 ONE_FRAME: Final[float] = 0.016
 
-BINDINGS: dict[str, XUSB_BUTTON] = {
-    "attack": XUSB_BUTTON.XUSB_GAMEPAD_A,
-    "special": XUSB_BUTTON.XUSB_GAMEPAD_B,
-    "jump": XUSB_BUTTON.XUSB_GAMEPAD_X,
-    "grab": XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
-    "shield": XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
-}
+LEFT = (1, 0)
+RIGHT = (-1, 0)
+UP = (0, 1)
+DOWN = (0, -1)
+
+
+class Command(Enum):
+    HOLD_NEXT = "HOLD_NEXT"
+    STOP_HOLDING_NEXT = "RELEASE_NEXT"
+    ATTACK = XUSB_BUTTON.XUSB_GAMEPAD_A
+    SPECIAL = XUSB_BUTTON.XUSB_GAMEPAD_B
+    JUMP = XUSB_BUTTON.XUSB_GAMEPAD_X
+    GRAB = XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER
+    SHIELD = XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER
+    LSTICK = "LSTICK"
+    RSTICK = "RSTICK"
 
 
 class ControllerAgent:
     def __init__(self):
         self.gamepad: vg.VX360Gamepad = vg.VX360Gamepad()
 
-    def press_and_release(self, button: XUSB_BUTTON):
-        self.gamepad.press_button(button)
-        self.gamepad.update()
-        time.sleep(ONE_FRAME)
+    def execute_commands(self, commands: list[tuple[Command, float, float]]):
+        hold_next = False
+        release_next = False
+        while commands:
+            command, stick_x, stick_y = commands.pop(0)
+            value = command.value
+            match value:
+                case "HOLD_NEXT":
+                    hold_next = True
+                    continue
+                case "RELEASE_NEXT":
+                    release_next = True
+                    continue
+                case XUSB_BUTTON() as button:
+                    self.use_button(button, hold_next, release_next)
+                case "RSTICK":
+                    self.use_rstick(stick_x, stick_y, hold_next, release_next)
+                case "LSTICK":
+                    self.use_lstick(stick_x, stick_y, hold_next, release_next)
+            hold_next = release_next = False
+
+    def use_button(self, button: XUSB_BUTTON, hold: bool, release: bool):
+        if not release:
+            self.gamepad.press_button(button)
+            self.gamepad.update()
+            if hold:
+                return
+            time.sleep(ONE_FRAME)
         self.gamepad.release_button(button)
         self.gamepad.update()
 
-    def press_attack(self):
-        self.press_and_release(BINDINGS["attack"])
-
-    def press_special(self):
-        self.press_and_release(BINDINGS["special"])
-
-    def press_jump(self):
-        self.press_and_release(BINDINGS["jump"])
-
-    def press_grab(self):
-        self.press_and_release(BINDINGS["grab"])
-
-    def press_shield(self):
-        self.press_and_release(BINDINGS["shield"])
-
-    def press_lr(self):
-        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
-        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
-        self.gamepad.update()
-        time.sleep(ONE_FRAME)
-        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
-        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
+    def use_rstick(self, x: float, y: float, hold: bool, release: bool):
+        if not release:
+            self.gamepad.right_joystick_float(x, y)
+            self.gamepad.update()
+            if hold:
+                return
+            time.sleep(ONE_FRAME)
+        self.gamepad.right_joystick_float(0, 0)
         self.gamepad.update()
 
-    def join_and_select_bowser(self):
-        self.press_lr()
-        self.gamepad.left_joystick(1, 1)
-        self.gamepad.right_joystick(1, 1)
-        self.gamepad.update()
-        time.sleep(ONE_FRAME * 50)
-        self.gamepad.left_joystick_float(-1, -1)
-        self.gamepad.update()
-        time.sleep(ONE_FRAME * 50)
-        self.gamepad.left_joystick_float(-1, 0)
-        self.gamepad.update()
-        time.sleep(ONE_FRAME * 22)
-        self.gamepad.left_joystick(0, 0)
-        self.gamepad.right_joystick(0, 0)
+    def use_lstick(self, x: float, y: float, hold: bool, release: bool):
+        if not release:
+            self.gamepad.left_joystick_float(x, y)
+            self.gamepad.update()
+            if hold:
+                return
+            time.sleep(ONE_FRAME)
+        self.gamepad.left_joystick_float(0, 0)
         self.gamepad.update()

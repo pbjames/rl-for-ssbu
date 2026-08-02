@@ -7,10 +7,12 @@ requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.21.1",
     "rich>=15.0.0",
+    "sb3-contrib>=2.9.0",
+    "stable-baselines3[extra]>=2.9.0",
     "torch>=2.13.0",
     "vgamepad>=0.1.0",
 ]
 
 [tool.pyright]
-# reportUnknownMemberType = "none"
+reportUnknownMemberType = "none"
 reportUnusedCallResult = "none"
