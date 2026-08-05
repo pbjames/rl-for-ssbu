@@ -2,16 +2,9 @@ from enum import Enum
 from typing import Final
 
 import vgamepad as vg  # pyright: ignore[reportMissingTypeStubs]
-import time
-
 from vgamepad.win.vigem_commons import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs] fmt: skip
 
 ONE_FRAME: Final[float] = 0.016
-
-LEFT = (1, 0)
-RIGHT = (-1, 0)
-UP = (0, 1)
-DOWN = (0, -1)
 
 
 class Command(Enum):
@@ -29,8 +22,9 @@ class Command(Enum):
 class ControllerAgent:
     def __init__(self):
         self.gamepad: vg.VX360Gamepad = vg.VX360Gamepad()
+        self._tick: XUSB_BUTTON | Command | None = None
 
-    def execute_commands(self, commands: list[tuple[Command, float, float]]):
+    def execute_commands(self, commands: list[tuple[Command, int, int]]):
         hold_next = False
         release_next = False
         while commands:
@@ -52,31 +46,47 @@ class ControllerAgent:
             hold_next = release_next = False
 
     def use_button(self, button: XUSB_BUTTON, hold: bool, release: bool):
+        self.release_ticked()
         if not release:
             self.gamepad.press_button(button)
             self.gamepad.update()
-            if hold:
-                return
-            time.sleep(ONE_FRAME)
+            if not hold:
+                self._tick = button
+            return
         self.gamepad.release_button(button)
         self.gamepad.update()
 
-    def use_rstick(self, x: float, y: float, hold: bool, release: bool):
+    def use_rstick(self, x: int, y: int, hold: bool, release: bool):
+        self.release_ticked()
         if not release:
-            self.gamepad.right_joystick_float(x, y)
+            self.gamepad.right_joystick(x, y)
             self.gamepad.update()
-            if hold:
-                return
-            time.sleep(ONE_FRAME)
-        self.gamepad.right_joystick_float(0, 0)
+            if not hold:
+                self._tick = Command.RSTICK
+            return
+        self.gamepad.right_joystick(0, 0)
         self.gamepad.update()
 
-    def use_lstick(self, x: float, y: float, hold: bool, release: bool):
+    def use_lstick(self, x: int, y: int, hold: bool, release: bool):
+        self.release_ticked()
         if not release:
-            self.gamepad.left_joystick_float(x, y)
+            self.gamepad.left_joystick(x, y)
             self.gamepad.update()
-            if hold:
+            if not hold:
+                self._tick = Command.LSTICK
+            return
+        self.gamepad.left_joystick(0, 0)
+        self.gamepad.update()
+
+    def release_ticked(self):
+        match self._tick:
+            case XUSB_BUTTON() as button:
+                self.gamepad.release_button(button)
+            case Command.LSTICK:
+                self.gamepad.left_joystick(0, 0)
+            case Command.RSTICK:
+                self.gamepad.right_joystick(0, 0)
+            case _:
                 return
-            time.sleep(ONE_FRAME)
-        self.gamepad.left_joystick_float(0, 0)
+        self._tick = None
         self.gamepad.update()

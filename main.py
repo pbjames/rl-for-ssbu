@@ -1,38 +1,57 @@
-import asyncio
-from pprint import pformat
+from pathlib import Path
 
-from rich.live import Live
+import numpy as np
+import rich
+import typer
+from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.evaluation import evaluate_policy  # pyright: ignore[reportUnknownVariableType] fmt: skip
 
-from info_server import EventQueue, InfoEvent, InfoServer
-from model import model_agent
-from structs import into_dict
-
-
-async def log_state(queue: EventQueue):
-    with Live(auto_refresh=False) as live:
-        while True:
-            event, state = await queue.get()
-            if event is InfoEvent.STATE_CHANGE:
-                live.update(pformat(into_dict(state)))
-            elif event is InfoEvent.GAME_OVER:
-                live.console.print("GAME OVER")
-            elif event is InfoEvent.CPU_KO:
-                live.console.print("CPU DIED")
-            elif event is InfoEvent.OPP_KO:
-                live.console.print("Opponent DIED")
-            live.refresh()
+app = typer.Typer()
+default_model = lambda: RecurrentPPO("MlpLstmPolicy", "SSBUEnv-v0", verbose=1)
 
 
-async def main():
-    info_server = InfoServer()
-    server = await asyncio.start_server(info_server.handle_client, "127.0.0.1", 7878)
-    async with server:
-        await asyncio.gather(
-            model_agent(info_server.subscribe()),
-            log_state(info_server.subscribe()),
-            server.serve_forever(),
-        )
+def safe_load_model(path: Path | str) -> RecurrentPPO:
+    model = RecurrentPPO.load(path)
+    return model or default_model()
+
+
+@app.callback(invoke_without_command=True)
+def main():
+    model = safe_load_model("ppo_lstm")
+    vec_env = model.get_env()
+    if not vec_env:
+        raise ValueError("Model with no vec env")
+    obs, lstm_states, num_envs = vec_env.reset(), None, 1
+    episode_starts = np.ones((num_envs,), dtype=bool)
+    while True:
+        try:
+            action, lstm_states = model.predict(
+                obs,  # pyright: ignore[reportArgumentType]
+                state=lstm_states,
+                episode_start=episode_starts,
+                deterministic=True,
+            )
+            obs, _rewards, _dones, _info = vec_env.step(action)
+        except (KeyboardInterrupt, EOFError):
+            break
+
+
+@app.command()
+def train(timesteps: float | int = 2e5):
+    model = safe_load_model("ppo_lstm")
+    model.learn(total_timesteps=int(timesteps), progress_bar=True)
+    model.save("ppo_lstm")
+
+
+@app.command()
+def evaluate(episodes: int = 10):
+    model = safe_load_model("ppo_lstm")
+    env = model.get_env()
+    if env is None:
+        raise ValueError("Model with no VecEnv")
+    mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=episodes)
+    rich.print(f"[bold green]{mean_reward=} {std_reward=}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    app()

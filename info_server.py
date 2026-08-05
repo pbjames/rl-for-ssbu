@@ -1,85 +1,96 @@
-import asyncio
+import queue
+import socket
 from enum import Enum
+from io import BufferedReader
 from typing import final
 
 import msgspec
 from msgspec.msgpack import Decoder
 
+from consts import END_MAGIC, HOST, REMOTE_HOST
 from structs import Message
 
 
 class InfoEvent(Enum):
     CPU_KO = "cpu_ko"
     OPP_KO = "opp_ko"
+    CPU_TOOK_DMG = "cpu_take_damage"
+    OPP_TOOK_DMG = "opp_take_damage"
     GAME_OVER = "game_over"
     STATE_CHANGE = "state_change"
 
 
-EventQueue = asyncio.Queue[tuple[InfoEvent, Message]]
+EventQueue = queue.Queue[tuple[*tuple[InfoEvent, ...], Message]]
 
 
 @final
 class InfoServer:
     def __init__(self):
-        self.state: Message | None = None
+        self.state: Message = Message.default()
         self._subscribers: list[EventQueue] = []
+        self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_sock.bind(HOST)
+        self._client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._client_sock.connect(REMOTE_HOST)
 
     def subscribe(self) -> EventQueue:
-        q: EventQueue = asyncio.Queue()
+        q: EventQueue = queue.Queue()
         self._subscribers.append(q)
         return q
 
     def unsubscribe(self, q: EventQueue):
         self._subscribers.remove(q)
 
-    async def publish(self, event: InfoEvent, state: Message):
+    def _publish(self, *events: InfoEvent, state: Message):
         for q in self._subscribers:
-            await q.put((event, state))
+            q.put((*events, state))
 
-    async def process_new_state(self, new_state: Message):
-        await self.handle_conditional_events(new_state)
+    def _process_new_state(self, new_state: Message):
+        self._handle_conditional_events(new_state)
         self.state = new_state
-        await self.publish(InfoEvent.STATE_CHANGE, new_state)
+        self._publish(InfoEvent.STATE_CHANGE, state=new_state)
 
-    async def handle_conditional_events(self, new_state: Message):
-        if self.state is None:
-            return
+    def _handle_conditional_events(self, new_state: Message):
+        events: list[InfoEvent] = []
         if (
             self.state.cpu.situation != "Outfield"
             and new_state.cpu.situation == "Outfield"
         ):
-            await self.publish(InfoEvent.CPU_KO, new_state)
+            events.append(InfoEvent.CPU_KO)
         if (
             self.state.opp.situation != "Outfield"
             and new_state.opp.situation == "Outfield"
         ):
-            await self.publish(InfoEvent.OPP_KO, new_state)
+            events.append(InfoEvent.OPP_KO)
         if self.state.stage != 310 and new_state.stage == 310:
-            await self.publish(InfoEvent.GAME_OVER, new_state)
+            events.append(InfoEvent.GAME_OVER)
+        if new_state.cpu.damage > self.state.cpu.damage:
+            events.append(InfoEvent.CPU_TOOK_DMG)
+        if new_state.opp.damage > self.state.opp.damage:
+            events.append(InfoEvent.OPP_TOOK_DMG)
+        self._publish(*events, state=new_state)
 
-    async def handle_client(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ):
-        addr: str = writer.get_extra_info("peername")  # pyright: ignore[reportAny]
+    def _handle_client(self, reader: BufferedReader):
         decoder = msgspec.msgpack.Decoder(Message)
         buffer = b""
         try:
             while True:
-                part = await reader.read(4096)
-                buffer = await self.process_buffer(decoder, buffer, part)
+                part = reader.read()
+                buffer = self._process_buffer(decoder, buffer, part)
+        except BaseException as e:
+            print(f"handle_client(): {e}")
         finally:
-            writer.close()
-            await writer.wait_closed()
-            print(f"Disconnected: {addr}")
+            print(f"Disconnected")
 
-    async def process_buffer(
+    def _process_buffer(
         self, decoder: Decoder[Message], buffer: bytes, part: bytes
     ) -> bytes:
-        for i in range(1, 3):
-            if (bpart := buffer[-i:]) + part[: 3 - i] == b"END":
+        for i in range(1, len(END_MAGIC)):
+            if (bpart := buffer[-i:]) + part[: len(END_MAGIC) - i] == END_MAGIC:
                 buffer = buffer[:-i]
                 part = bpart + part
-        parts = part.split(b"END")
+        parts = part.split(END_MAGIC)
         states: list[Message] = []
         if (n := len(parts)) > 1:
             try:
@@ -87,10 +98,21 @@ class InfoServer:
                 for i in range(1, n - 1):
                     states.append(decoder.decode(parts[i]))
                 while states:
-                    await self.process_new_state(states.pop(0))
+                    self._process_new_state(states.pop(0))
                 return parts[n - 1]
             except msgspec.DecodeError as e:
                 print(f"{part=} {parts=} {buffer=}")
                 raise e
         else:
             return buffer + part
+
+    def step_game(self):
+        conn, addr = self._server_sock.accept()
+        reader = conn.makefile("rb")
+        self._handle_client(reader)
+        conn.close()
+        self._client_sock.sendall(b"ACK")
+
+    def close_sockets(self):
+        self._server_sock.close()
+        self._client_sock.close()
