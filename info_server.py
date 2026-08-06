@@ -1,7 +1,9 @@
+from functools import cache
 import queue
 import socket
 from enum import Enum
 from io import BufferedReader
+import time
 from typing import final
 
 import msgspec
@@ -29,10 +31,23 @@ class InfoServer:
         self.state: Message = Message.default()
         self._subscribers: list[EventQueue] = []
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_conn: socket.socket | None = None
+
+    @cache
+    def _lazy_activate_sockets(self):
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_sock.bind(HOST)
-        self._client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._client_sock.connect(REMOTE_HOST)
+        self._server_sock.listen()
+        while True:
+               try:
+                   self._client_sock.connect(REMOTE_HOST)
+                   break
+               except BaseException as e:
+                   time.sleep(0.2)
+        self._server_conn, addr = self._server_sock.accept()
+        return self._server_conn.makefile("rb")
+
 
     def subscribe(self) -> EventQueue:
         q: EventQueue = queue.Queue()
@@ -74,45 +89,35 @@ class InfoServer:
     def _handle_client(self, reader: BufferedReader):
         decoder = msgspec.msgpack.Decoder(Message)
         buffer = b""
-        try:
-            while True:
-                part = reader.read()
-                buffer = self._process_buffer(decoder, buffer, part)
-        except BaseException as e:
-            print(f"handle_client(): {e}")
-        finally:
-            print(f"Disconnected")
+        while True:
+            part = reader.read1(4096)
+            buffer = self._process_buffer(decoder, buffer, part)
+            if buffer == b"":
+                break
 
     def _process_buffer(
         self, decoder: Decoder[Message], buffer: bytes, part: bytes
     ) -> bytes:
-        for i in range(1, len(END_MAGIC)):
-            if (bpart := buffer[-i:]) + part[: len(END_MAGIC) - i] == END_MAGIC:
-                buffer = buffer[:-i]
-                part = bpart + part
-        parts = part.split(END_MAGIC)
-        states: list[Message] = []
-        if (n := len(parts)) > 1:
+        buffer += part
+        if buffer.endswith(END_MAGIC):
             try:
-                states.append(decoder.decode(buffer + parts[0]))
-                for i in range(1, n - 1):
-                    states.append(decoder.decode(parts[i]))
-                while states:
-                    self._process_new_state(states.pop(0))
-                return parts[n - 1]
+                self._process_new_state(decoder.decode(buffer[:-3]))
+                return b""
             except msgspec.DecodeError as e:
-                print(f"{part=} {parts=} {buffer=}")
                 raise e
         else:
-            return buffer + part
+            return buffer
+            
 
     def step_game(self):
-        conn, addr = self._server_sock.accept()
-        reader = conn.makefile("rb")
+        reader = self._lazy_activate_sockets()
+        if self._server_conn is None:
+            return
         self._handle_client(reader)
-        conn.close()
-        self._client_sock.sendall(b"ACK")
+        self._client_sock.sendall(b"ACK\n")
 
     def close_sockets(self):
+        if self._server_conn is not None:
+            self._server_conn.close()
         self._server_sock.close()
         self._client_sock.close()

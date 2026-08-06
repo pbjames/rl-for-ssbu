@@ -6,17 +6,30 @@ import typer
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.evaluation import evaluate_policy  # pyright: ignore[reportUnknownVariableType] fmt: skip
 
-app = typer.Typer()
-default_model = lambda: RecurrentPPO("MlpLstmPolicy", "SSBUEnv-v0", verbose=1)
+from env import make_env
 
+app = typer.Typer()
+default_model = lambda e: RecurrentPPO(
+    "MlpLstmPolicy", e, verbose=1
+)
 
 def safe_load_model(path: Path | str) -> RecurrentPPO:
-    model = RecurrentPPO.load(path)
-    return model or default_model()
+    env = make_env()
+    model = default_model(env)
+    try:
+        model = RecurrentPPO.load(path, env=env)
+    except FileNotFoundError:
+        rich.print("[green] Creating new model! 🤸")
+    except BaseException as e:
+        rich.print(f"[bold red] Model loading exception: {e}")
+    finally:
+        return model
 
 
 @app.callback(invoke_without_command=True)
-def main():
+def main(ctx: typer.Context):
+    if ctx.invoked_subcommand is not None:
+        return
     model = safe_load_model("ppo_lstm")
     vec_env = model.get_env()
     if not vec_env:
@@ -37,7 +50,7 @@ def main():
 
 
 @app.command()
-def train(timesteps: float | int = 2e5):
+def train(timesteps: float = 2e5):
     model = safe_load_model("ppo_lstm")
     model.learn(total_timesteps=int(timesteps), progress_bar=True)
     model.save("ppo_lstm")

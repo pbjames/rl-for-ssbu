@@ -10,9 +10,9 @@ ONE_FRAME: Final[float] = 0.016
 class Command(Enum):
     HOLD_NEXT = "HOLD_NEXT"
     STOP_HOLDING_NEXT = "RELEASE_NEXT"
-    ATTACK = XUSB_BUTTON.XUSB_GAMEPAD_A
-    SPECIAL = XUSB_BUTTON.XUSB_GAMEPAD_B
-    JUMP = XUSB_BUTTON.XUSB_GAMEPAD_X
+    ATTACK = XUSB_BUTTON.XUSB_GAMEPAD_B
+    SPECIAL = XUSB_BUTTON.XUSB_GAMEPAD_A
+    JUMP = XUSB_BUTTON.XUSB_GAMEPAD_Y
     GRAB = XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER
     SHIELD = XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER
     LSTICK = "LSTICK"
@@ -24,6 +24,14 @@ class ControllerAgent:
         self.gamepad: vg.VX360Gamepad = vg.VX360Gamepad()
         self._tick: XUSB_BUTTON | Command | None = None
 
+    def press_lr(self):
+        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
+        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        self.gamepad.update()
+        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
+        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        self.gamepad.update()
+ 
     def execute_commands(self, commands: list[tuple[Command, int, int]]):
         hold_next = False
         release_next = False
