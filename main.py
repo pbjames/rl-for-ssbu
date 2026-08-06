@@ -6,15 +6,15 @@ import typer
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.evaluation import evaluate_policy  # pyright: ignore[reportUnknownVariableType] fmt: skip
 
+from consts import PLUGIN_FILE_NAME, PLUGINS_BASE
 from env import make_env
+from model import default_model
 
 app = typer.Typer()
-default_model = lambda e: RecurrentPPO(
-    "MlpLstmPolicy", e, verbose=1
-)
 
-def safe_load_model(path: Path | str) -> RecurrentPPO:
-    env = make_env()
+
+def safe_load_model(path: Path | str, self_play: bool = False) -> RecurrentPPO:
+    env = make_env(self_play)
     model = default_model(env)
     try:
         model = RecurrentPPO.load(path, env=env)
@@ -27,33 +27,17 @@ def safe_load_model(path: Path | str) -> RecurrentPPO:
 
 
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
-    if ctx.invoked_subcommand is not None:
-        return
-    model = safe_load_model("ppo_lstm")
-    vec_env = model.get_env()
-    if not vec_env:
-        raise ValueError("Model with no vec env")
-    obs, lstm_states, num_envs = vec_env.reset(), None, 1
-    episode_starts = np.ones((num_envs,), dtype=bool)
-    while True:
-        try:
-            action, lstm_states = model.predict(
-                obs,  # pyright: ignore[reportArgumentType]
-                state=lstm_states,
-                episode_start=episode_starts,
-                deterministic=True,
-            )
-            obs, _rewards, _dones, _info = vec_env.step(action)
-        except (KeyboardInterrupt, EOFError):
-            break
+def main(ctx: typer.Context): ...
 
 
 @app.command()
-def train(timesteps: float = 2e5):
-    model = safe_load_model("ppo_lstm")
+def train(timesteps: float = 2e6, infinite: bool = False, self_play: bool = False):
+    model = safe_load_model("ppo_lstm", self_play)
     model.learn(total_timesteps=int(timesteps), progress_bar=True)
     model.save("ppo_lstm")
+    while infinite:
+        model.learn(total_timesteps=int(timesteps), progress_bar=True)
+        model.save("ppo_lstm")
 
 
 @app.command()
@@ -64,6 +48,18 @@ def evaluate(episodes: int = 10):
         raise ValueError("Model with no VecEnv")
     mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=episodes)
     rich.print(f"[bold green]{mean_reward=} {std_reward=}")
+
+
+@app.command()
+def toggle():
+    original = PLUGINS_BASE / PLUGIN_FILE_NAME
+    other = PLUGINS_BASE.parent / PLUGIN_FILE_NAME
+    if original.is_file() and original.exists():
+        original.rename(other)
+        rich.print("[bold yellow]Plugin OFF")
+    else:
+        other.rename(original)
+        print("[bold green]Plugin ON")
 
 
 if __name__ == "__main__":

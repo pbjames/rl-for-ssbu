@@ -40,14 +40,13 @@ class InfoServer:
         self._server_sock.bind(HOST)
         self._server_sock.listen()
         while True:
-               try:
-                   self._client_sock.connect(REMOTE_HOST)
-                   break
-               except BaseException as e:
-                   time.sleep(0.2)
+            try:
+                self._client_sock.connect(REMOTE_HOST)
+                break
+            except BaseException as e:
+                time.sleep(0.2)
         self._server_conn, addr = self._server_sock.accept()
         return self._server_conn.makefile("rb")
-
 
     def subscribe(self) -> EventQueue:
         q: EventQueue = queue.Queue()
@@ -107,7 +106,6 @@ class InfoServer:
                 raise e
         else:
             return buffer
-            
 
     def step_game(self):
         reader = self._lazy_activate_sockets()

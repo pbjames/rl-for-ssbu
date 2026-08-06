@@ -1,10 +1,10 @@
 from enum import Enum
-from typing import Final
+from functools import cache
+import time
+from typing import Self, final
 
 import vgamepad as vg  # pyright: ignore[reportMissingTypeStubs]
 from vgamepad.win.vigem_commons import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs] fmt: skip
-
-ONE_FRAME: Final[float] = 0.016
 
 
 class Command(Enum):
@@ -18,43 +18,37 @@ class Command(Enum):
     LSTICK = "LSTICK"
     RSTICK = "RSTICK"
 
+    @classmethod
+    @cache
+    def by_index(cls, idx: int) -> Self:
+        return list(cls)[idx]
 
+
+@final
 class ControllerAgent:
     def __init__(self):
         self.gamepad: vg.VX360Gamepad = vg.VX360Gamepad()
         self._tick: XUSB_BUTTON | Command | None = None
+        self._hold_next = self._release_next = False
 
-    def press_lr(self):
-        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
-        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
-        self.gamepad.update()
-        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
-        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
-        self.gamepad.update()
- 
-    def execute_commands(self, commands: list[tuple[Command, int, int]]):
-        hold_next = False
-        release_next = False
-        while commands:
-            command, stick_x, stick_y = commands.pop(0)
-            value = command.value
-            match value:
-                case "HOLD_NEXT":
-                    hold_next = True
-                    continue
-                case "RELEASE_NEXT":
-                    release_next = True
-                    continue
-                case XUSB_BUTTON() as button:
-                    self.use_button(button, hold_next, release_next)
-                case "RSTICK":
-                    self.use_rstick(stick_x, stick_y, hold_next, release_next)
-                case "LSTICK":
-                    self.use_lstick(stick_x, stick_y, hold_next, release_next)
-            hold_next = release_next = False
+    def execute(self, command: Command, stick_x: int, stick_y: int):
+        match command.value:
+            case "HOLD_NEXT":
+                self._hold_next = True
+                return
+            case "RELEASE_NEXT":
+                self._release_next = True
+                return
+            case XUSB_BUTTON() as button:
+                self.use_button(button, self._hold_next, self._release_next)
+            case "RSTICK":
+                self.use_rstick(stick_x, stick_y, self._hold_next, self._release_next)
+            case "LSTICK":
+                self.use_lstick(stick_x, stick_y, self._hold_next, self._release_next)
+        self._release_next = self._hold_next = False
 
     def use_button(self, button: XUSB_BUTTON, hold: bool, release: bool):
-        self.release_ticked()
+        self._release_ticked()
         if not release:
             self.gamepad.press_button(button)
             self.gamepad.update()
@@ -65,7 +59,7 @@ class ControllerAgent:
         self.gamepad.update()
 
     def use_rstick(self, x: int, y: int, hold: bool, release: bool):
-        self.release_ticked()
+        self._release_ticked()
         if not release:
             self.gamepad.right_joystick(x, y)
             self.gamepad.update()
@@ -76,7 +70,7 @@ class ControllerAgent:
         self.gamepad.update()
 
     def use_lstick(self, x: int, y: int, hold: bool, release: bool):
-        self.release_ticked()
+        self._release_ticked()
         if not release:
             self.gamepad.left_joystick(x, y)
             self.gamepad.update()
@@ -86,7 +80,7 @@ class ControllerAgent:
         self.gamepad.left_joystick(0, 0)
         self.gamepad.update()
 
-    def release_ticked(self):
+    def _release_ticked(self):
         match self._tick:
             case XUSB_BUTTON() as button:
                 self.gamepad.release_button(button)
@@ -98,3 +92,22 @@ class ControllerAgent:
                 return
         self._tick = None
         self.gamepad.update()
+
+    def press_lr(self):
+        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
+        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        self.gamepad.update()
+        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER)
+        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        self.gamepad.update()
+
+    def marth_selection_sequence(self):
+        self.gamepad.reset()
+        self.gamepad.update()
+        self.press_lr()
+        self.use_lstick(-32768, -32768, hold=False, release=False)
+        time.sleep(3)
+        self.use_lstick(30000, 8333, hold=False, release=False)
+        time.sleep(1.2)
+        self.use_lstick(0, 0, hold=False, release=False)
+        self.use_button(XUSB_BUTTON.XUSB_GAMEPAD_B, hold=False, release=False)

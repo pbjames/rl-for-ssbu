@@ -1,67 +1,102 @@
-import time
-from typing import Any, Final, final, override
+from collections import defaultdict
+from copy import deepcopy
+from typing import Any, Callable, Self, final, override
 
-import gymnasium as gym
-from gymnasium.wrappers import FlattenObservation
 import numpy as np
 from gymnasium import Env
-from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Space
-from msgspec import Struct
+from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Space, flatten
+from gymnasium.wrappers import FlattenObservation
 from numpy.typing import NDArray
-import rich
-from vgamepad import XUSB_BUTTON
+from sb3_contrib import RecurrentPPO
 
+from consts import GAMEPAD_STICK_ARR, REWARD_DMG_SCALE, REWARD_HIT, REWARD_KO
 from gamepad import Command, ControllerAgent
 from info_server import InfoEvent, InfoServer
 from structs import Message, Situation, Status, into_dict
 
-ACTIONS_LIST: Final[list[Command]] = list(Command)
-SITUATION_LIST: Final[list[Situation]] = list(Situation)
-STATUS_LIST: Final[list[Status]] = list(Status)
-GAMEPAD_STICK_BOUNDS: Final[tuple[int, int]] = -32768, 32767
-REWARD_LOSS: Final[int] = -3
-REWARD_KO: Final[int] = 3
-REWARD_WIN: Final[int] = 10
-DEFAULT_MESSAGE: Final[Message] = Message.default()
-GAMEPAD_STICK_ARR: Final[NDArray[np.float64]] = np.linspace(
-    *GAMEPAD_STICK_BOUNDS, num=256
-)
+
+@final
+class SSBUSelfPlayModule:
+    def __init__(self):
+        self.controller = ControllerAgent()
+        self._model = RecurrentPPO.load("ppo_lstm")
+        self._lstm_states = None
+        self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
+        self._last_seen_obs = {}
+        self._num_envs = 1
+        self._episode_starts = np.ones((self._num_envs,), dtype=bool)
+
+    def _execute_action(self, action: NDArray[np.integer]):
+        command: Command = Command.by_index(action[0])  # pyright: ignore[reportAny]
+        self.controller.execute(
+            command,
+            int(GAMEPAD_STICK_ARR[action[1]]),
+            int(GAMEPAD_STICK_ARR[action[2]]),
+        )
+
+    def reload(self):
+        self._model = RecurrentPPO.load("ppo_lstm")
+        self._last_seen_obs = {}
+        self._episode_starts = np.ones((self._num_envs,), dtype=bool)
+        self._lstm_states = None
+
+    def observe(self, d: dict[str, Any]):
+        self._last_seen_obs = deepcopy(d)
+        self._last_seen_obs["cpu"], self._last_seen_obs["opp"] = (
+            self._last_seen_obs["opp"],
+            self._last_seen_obs["cpu"],
+        )
+
+    def step(self):
+        if not self._last_seen_obs:
+            return
+        action, self._lstm_states = self._model.predict(
+            flatten(self.observation_space, self._last_seen_obs),
+            state=self._lstm_states,
+            episode_start=self._episode_starts,
+            deterministic=False,
+        )
+        self._execute_action(action)
 
 
 @final
 class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
-    def __init__(self, fighter_index: int = 1):
+    def __init__(
+        self, fighter_index: int = 1, self_play: SSBUSelfPlayModule | None = None
+    ):
         super(SSBUEnv, self).__init__()
         self.fighter_index = fighter_index
-        self._controller = ControllerAgent()
+        self.controller = ControllerAgent()
         self._info_server = InfoServer()
         self._events = self._info_server.subscribe()
-        self.action_space = MultiDiscrete(np.array([len(ACTIONS_LIST), 256, 256]))
+        self.action_space = MultiDiscrete(np.array([len(list(Command)), 256, 256]))
         self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
+        self.self_play = self_play
 
     def _execute_action(self, action: NDArray[np.integer]):
-        command = (
-            ACTIONS_LIST[action[0]],
+        command: Command = Command.by_index(action[0])  # pyright: ignore[reportAny]
+        self.controller.execute(
+            command,
             int(GAMEPAD_STICK_ARR[action[1]]),
             int(GAMEPAD_STICK_ARR[action[2]]),
         )
-        self._controller.execute_commands([command])
+
+    def _harness(self, f: Callable[[], None]):
+        try:
+            f()
+        except BaseException as e:
+            with open("log", "+a") as fp:
+                fp.writelines([f"{e}"])
+                raise e
 
     @override
     def reset(
         self, *, seed: int | None = None, options: dict[str, None] | None = None
     ) -> tuple[dict[str, Any], dict[str, None]]:
-        """Start a new episode.
-
-        Args:
-            seed: Random seed for reproducible episodes
-            options: Additional configuration (unused in this example)
-
-        Returns:
-            tuple: (observation, info) for the initial state
-        """
         super().reset(seed=seed)
-        d =into_dict(Message.default(), int_enums=True)
+        d = into_dict(Message.default(), int_enums=True)
+        if self.self_play is not None:
+            self.self_play.reload()
         return d, {}
 
     @override
@@ -69,36 +104,40 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
         self, action: NDArray[np.integer]
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         self._execute_action(action)
-        try:
-            self._info_server.step_game()
-        except BaseException as e:
-            with open("log", "+a") as fp:
-                fp.writelines([f"{e}"])
-                raise e
+        if self.self_play:
+            self.self_play.step()
+        self._harness(self._info_server.step_game)
         reward = 0
         terminate = truncated = False
-        info = {}
+        info = {
+            "opponent": {"wins": 0},
+            "learner": {"wins": 0},
+        }
         *events, state = self._events.get()
         for event in events:
             match event:
                 case InfoEvent.CPU_KO:
-                    rich.print("I died")
-                    reward -= REWARD_KO
+                    info["opponent"]["wins"] += 1
+                    reward -= REWARD_KO * 2
+                    terminate = True
                 case InfoEvent.OPP_KO:
-                    rich.print("Opponent died")
+                    info["learner"]["wins"] += 1
                     reward += REWARD_KO
+                    terminate = True
                 case InfoEvent.CPU_TOOK_DMG:
-                    reward -= -0.05 * (state.cpu.damage / 20)
-                    rich.print("I took damage")
+                    reward -= -REWARD_HIT * (state.cpu.damage * REWARD_DMG_SCALE)
                 case InfoEvent.OPP_TOOK_DMG:
-                    reward += 0.05 * (state.opp.damage / 20)
-                    rich.print("Opponent took damage")
+                    reward += REWARD_HIT * (state.opp.damage * REWARD_DMG_SCALE)
                 case InfoEvent.GAME_OVER:
-                    rich.print("Game over")
                     terminate = True
                 case InfoEvent.STATE_CHANGE:
                     continue
-        return into_dict(state, int_enums=True), reward, terminate, truncated, info
+        if reward <= 0:
+            reward -= 0.01
+        d = into_dict(state, int_enums=True)
+        if self.self_play is not None:
+            self.self_play.observe(d)
+        return d, reward, terminate, truncated, info
 
 
 def into_dict_obs(d: dict[str, Any]) -> dict[str, Space[Any]]:
@@ -115,9 +154,9 @@ def into_dict_obs(d: dict[str, Any]) -> dict[str, Space[Any]]:
             d[k] = Discrete(2)
         elif isinstance(v, str):
             if k == "situation":
-                d[k] = Discrete(len(SITUATION_LIST))
+                d[k] = Discrete(len(Situation.values()))
             elif k == "status":
-                d[k] = Discrete(len(STATUS_LIST))
+                d[k] = Discrete(len(Status.values()))
             else:
                 e = f"Unknown key for string value '{k}' when decoding into Dict space"
                 raise ValueError(e)
@@ -127,23 +166,11 @@ def into_dict_obs(d: dict[str, Any]) -> dict[str, Space[Any]]:
     return d
 
 
-def make_env():
-    env = SSBUEnv()
-    print("Welcome to controller setup")
-    input("Press enter after setting up controller in Eden.")
-    env._controller.gamepad.reset()
-    env._controller.gamepad.update()
+def make_env(self_play: bool = False):
+    module = SSBUSelfPlayModule() if self_play else None
+    env = SSBUEnv(self_play=module)
     input("Press enter after going to the smash character selection menu.")
-    env._controller.press_lr()
-    env._controller.gamepad.left_joystick(-30000, -30000)
-    env._controller.gamepad.update()
-    time.sleep(2.5)
-    env._controller.gamepad.left_joystick(30000, 8333)
-    env._controller.gamepad.update()
-    time.sleep(1.2)
-    env._controller.gamepad.left_joystick(0, 0)
-    env._controller.gamepad.update()
-    env._controller.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
-    env._controller.gamepad.update()
-    input("Press enter when the game halts.")
+    if self_play and module is not None:
+        module.controller.marth_selection_sequence()
+    env.controller.marth_selection_sequence()
     return FlattenObservation(env)

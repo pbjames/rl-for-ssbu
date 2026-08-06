@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import cache
 from typing import Self
 
 import msgspec
@@ -22,6 +23,11 @@ class Situation(StrEnum):
     Outfield = "Outfield"
     Restraint = "Restraint"
     Water = "Water"
+
+    @classmethod
+    @cache
+    def values(cls):
+        return [s.value for s in cls]
 
 
 class Status(StrEnum):
@@ -50,6 +56,11 @@ class Status(StrEnum):
     EscapeB = "EscapeB"
     EscapeF = "EscapeF"
     Dead = "Dead"
+
+    @classmethod
+    @cache
+    def values(cls):
+        return [s.value for s in cls]
 
 
 class Message(Struct, array_like=True):
@@ -110,14 +121,14 @@ class Attack(Struct, array_like=True):
         )
 
 
-def into_dict(struct: Struct, int_enums: bool  = False):
+def into_dict(struct: Struct, int_enums: bool = False):
     d = msgspec.structs.asdict(struct)
     for k, v in d.items():
         if isinstance(v, Struct):
-            d[k] = into_dict(v, int_enums) 
-        if int_enums:
+            d[k] = into_dict(v, int_enums)
+        if int_enums and isinstance(v, str):
             if k == "situation":
-                d[k] = list(s.value for s in Situation).index(v)
+                d[k] = Situation.values().index(v)
             elif k == "status":
-                d[k] = list(s.value for s in Status).index(v)
+                d[k] = Status.values().index(v)
     return d
