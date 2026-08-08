@@ -1,15 +1,15 @@
-from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Callable, Self, final, override
+from typing import Any, Callable, final, override
 
 import numpy as np
 from gymnasium import Env
 from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Space, flatten
-from gymnasium.wrappers import FlattenObservation
+from gymnasium.wrappers import FlattenObservation, TimeLimit
 from numpy.typing import NDArray
 from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.callbacks import BaseCallback
 
-from consts import GAMEPAD_STICK_ARR, REWARD_DMG_SCALE, REWARD_HIT, REWARD_KO
+from consts import GAMEPAD_STICK_ARR, GAMEPAD_STICK_RES, REWARD_DMG_SCALE, REWARD_HIT, REWARD_KO
 from gamepad import Command, ControllerAgent
 from info_server import InfoEvent, InfoServer
 from structs import Message, Situation, Status, into_dict
@@ -69,9 +69,18 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
         self.controller = ControllerAgent()
         self._info_server = InfoServer()
         self._events = self._info_server.subscribe()
-        self.action_space = MultiDiscrete(np.array([len(list(Command)), 256, 256]))
+        self.action_space = MultiDiscrete(np.array([len(list(Command)), GAMEPAD_STICK_RES, GAMEPAD_STICK_RES]))
         self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
         self.self_play = self_play
+        self._info = {
+            "reward_components": {
+                "continuous": 0.0,
+                "death": 0.0,
+                "kill": 0.0,
+                "damage_taken": 0.0,
+                "damage_dealt": 0.0,
+            }
+        }
 
     def _execute_action(self, action: NDArray[np.integer]):
         command: Command = Command.by_index(action[0])  # pyright: ignore[reportAny]
@@ -92,52 +101,56 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
     @override
     def reset(
         self, *, seed: int | None = None, options: dict[str, None] | None = None
-    ) -> tuple[dict[str, Any], dict[str, None]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         super().reset(seed=seed)
         d = into_dict(Message.default(), int_enums=True)
         if self.self_play is not None:
             self.self_play.reload()
-        return d, {}
+        for k in self._info["reward_components"]:
+            self._info["reward_components"][k] = 0.0
+        return d, self._info
 
     @override
     def step(
         self, action: NDArray[np.integer]
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         self._execute_action(action)
+        # TODO: Reward cpu for being closer to stage center, and hitting opponent out
         if self.self_play:
             self.self_play.step()
         self._harness(self._info_server.step_game)
         reward = 0
         terminate = truncated = False
-        info = {
-            "opponent": {"wins": 0},
-            "learner": {"wins": 0},
-        }
         *events, state = self._events.get()
         for event in events:
             match event:
                 case InfoEvent.CPU_KO:
-                    info["opponent"]["wins"] += 1
                     reward -= REWARD_KO * 2
-                    terminate = True
+                    self._info["reward_components"]["death"] -= REWARD_KO * 2
                 case InfoEvent.OPP_KO:
-                    info["learner"]["wins"] += 1
                     reward += REWARD_KO
-                    terminate = True
+                    self._info["reward_components"]["kill"] += REWARD_KO * 2
                 case InfoEvent.CPU_TOOK_DMG:
                     reward -= -REWARD_HIT * (state.cpu.damage * REWARD_DMG_SCALE)
+                    self._info["reward_components"]["damage_taken"] -= REWARD_HIT * (
+                        state.cpu.damage * REWARD_DMG_SCALE
+                    )
                 case InfoEvent.OPP_TOOK_DMG:
                     reward += REWARD_HIT * (state.opp.damage * REWARD_DMG_SCALE)
+                    self._info["reward_components"]["damage_dealt"] += REWARD_HIT * (
+                        state.cpu.damage * REWARD_DMG_SCALE
+                    )
                 case InfoEvent.GAME_OVER:
                     terminate = True
                 case InfoEvent.STATE_CHANGE:
                     continue
         if reward <= 0:
-            reward -= 0.01
+            reward -= 0.001
+            self._info["reward_components"]["continuous"] -= 0.001
         d = into_dict(state, int_enums=True)
         if self.self_play is not None:
             self.self_play.observe(d)
-        return d, reward, terminate, truncated, info
+        return d, reward, terminate, truncated, self._info
 
 
 def into_dict_obs(d: dict[str, Any]) -> dict[str, Space[Any]]:
@@ -166,6 +179,22 @@ def into_dict_obs(d: dict[str, Any]) -> dict[str, Space[Any]]:
     return d
 
 
+class RewardComponentLoggingCallback(BaseCallback):
+    def _on_step(self) -> bool:
+        infos: list[dict[str, Any]] = self.locals["infos"]
+
+        for key in ["continuous", "damage_dealt", "damage_taken", "death", "kill"]:
+            values = [
+                info["reward_components"][key]
+                for info in infos
+                if "reward_components" in info
+            ]
+            if values:
+                self.logger.record(f"reward/{key}", np.sum(values))
+
+        return True
+
+
 def make_env(self_play: bool = False):
     module = SSBUSelfPlayModule() if self_play else None
     env = SSBUEnv(self_play=module)
@@ -173,4 +202,5 @@ def make_env(self_play: bool = False):
     if self_play and module is not None:
         module.controller.marth_selection_sequence()
     env.controller.marth_selection_sequence()
-    return FlattenObservation(env)
+    input("Press enter after starting the game")
+    return TimeLimit(FlattenObservation(env), max_episode_steps=27000)

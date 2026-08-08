@@ -1,13 +1,12 @@
 from pathlib import Path
 
-import numpy as np
 import rich
 import typer
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.evaluation import evaluate_policy  # pyright: ignore[reportUnknownVariableType] fmt: skip
 
 from consts import PLUGIN_FILE_NAME, PLUGINS_BASE
-from env import make_env
+from env import RewardComponentLoggingCallback, make_env
 from model import default_model
 
 app = typer.Typer()
@@ -26,17 +25,20 @@ def safe_load_model(path: Path | str, self_play: bool = False) -> RecurrentPPO:
         return model
 
 
-@app.callback(invoke_without_command=True)
-def main(ctx: typer.Context): ...
-
-
 @app.command()
 def train(timesteps: float = 2e6, infinite: bool = False, self_play: bool = False):
+    def learning_config(model: RecurrentPPO):
+        model.learn(
+            total_timesteps=int(timesteps),
+            progress_bar=True,
+            callback=RewardComponentLoggingCallback(),
+        )
+
     model = safe_load_model("ppo_lstm", self_play)
-    model.learn(total_timesteps=int(timesteps), progress_bar=True)
+    learning_config(model)
     model.save("ppo_lstm")
     while infinite:
-        model.learn(total_timesteps=int(timesteps), progress_bar=True)
+        learning_config(model)
         model.save("ppo_lstm")
 
 
@@ -60,6 +62,10 @@ def toggle():
     else:
         other.rename(original)
         print("[bold green]Plugin ON")
+
+
+# @app.callback(invoke_without_command=True)
+# def main(ctx: typer.Context): ...
 
 
 if __name__ == "__main__":

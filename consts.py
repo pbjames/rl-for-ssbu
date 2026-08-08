@@ -27,6 +27,7 @@ REWARD_WIN: Final[int] = 100
 REWARD_HIT: Final[float] = 1
 REWARD_DMG_SCALE: Final[float] = 0.08
 GAMEPAD_STICK_BOUNDS: Final[tuple[int, int]] = -32768, 32767
+GAMEPAD_STICK_RES: Final[int] = 3
 GAMEPAD_STICK_ARR: Final[NDArray[np.float64]] = np.linspace(
-    *GAMEPAD_STICK_BOUNDS, num=256
+    *GAMEPAD_STICK_BOUNDS, num=GAMEPAD_STICK_RES
 )

@@ -1,9 +1,9 @@
-from functools import cache
 import queue
 import socket
-from enum import Enum
-from io import BufferedReader
 import time
+from enum import Enum
+from functools import cache
+from io import BufferedReader
 from typing import final
 
 import msgspec
