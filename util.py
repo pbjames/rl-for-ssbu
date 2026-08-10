@@ -1,33 +1,50 @@
 from pathlib import Path
-from typing import Final
+import rich
+from gymnasium.wrappers import FlattenObservation, TimeLimit
+from sb3_contrib import RecurrentPPO
 
-BASE: Final[Path] = (
-    Path("~").expanduser()
-    / ".local"
-    / "share"
-    / "eden"
-    / "sdmc"
-    / "atmosphere"
-    / "contents"
-    / "01006A800016E000"
-    / "romfs"
-    / "skyline"
-    / "plugins"
-)
-FILE_NAME: Final[str] = "libsmash_cpu_info.nro"
+from env import SkipStepWrapper, SSBUEnv, SSBUSelfPlay
+from gamepad import ControllerAgent
+from model import default_model
 
 
-def main():
-    original = BASE / FILE_NAME
-    other = BASE.parent / FILE_NAME
-    print(other, other.is_file(), other.exists())
-    if original.is_file() and original.exists():
-        original.rename(other)
-        print("Moving plugin away")
+def make_env(self_play: str = ""):
+    env = SSBUEnv()
+    input("Press enter after going to the smash character selection menu.")
+    if self_play:
+        sp_controller = ControllerAgent()
+        sp_controller.marth_selection_sequence()
+        env.controller.marth_selection_sequence()
+        input("Press enter after starting the game")
+        return TimeLimit(
+            SSBUSelfPlay(
+                SkipStepWrapper(
+                    FlattenObservation(env),
+                ),
+                sp_controller,
+                self_play,
+            ),
+            max_episode_steps=24000,
+        )
     else:
-        other.rename(original)
-        print("Reinstate plugin")
+        env.controller.marth_selection_sequence()
+        input("Press enter after starting the game")
+        return TimeLimit(
+            SkipStepWrapper(
+                FlattenObservation(env),
+            ),
+            max_episode_steps=24000,
+        )
 
 
-if __name__ == "__main__":
-    main()
+def safe_load_model(path: Path | str, self_play: str = "") -> RecurrentPPO:
+    env = make_env(self_play)
+    model = default_model(env)
+    try:
+        model = RecurrentPPO.load(path, env=env)
+    except FileNotFoundError:
+        rich.print("[green] Creating new model! 🤸")
+    except BaseException as e:
+        rich.print(f"[bold red] Model loading exception: {e}")
+    finally:
+        return model

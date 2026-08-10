@@ -1,27 +1,10 @@
-from enum import Enum
-from functools import cache
 import time
-from typing import Self, final
+from typing import final
 
-import vgamepad as vg  # pyright: ignore[reportMissingTypeStubs]
-from vgamepad.win.vigem_commons import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs] fmt: skip
+import vgamepad as vg
+from vgamepad.win.vigem_commons import XUSB_BUTTON
 
-
-class Command(Enum):
-    HOLD_NEXT = "HOLD_NEXT"
-    STOP_HOLDING_NEXT = "RELEASE_NEXT"
-    ATTACK = XUSB_BUTTON.XUSB_GAMEPAD_B
-    SPECIAL = XUSB_BUTTON.XUSB_GAMEPAD_A
-    JUMP = XUSB_BUTTON.XUSB_GAMEPAD_Y
-    GRAB = XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER
-    SHIELD = XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER
-    LSTICK = "LSTICK"
-    RSTICK = "RSTICK"
-
-    @classmethod
-    @cache
-    def by_index(cls, idx: int) -> Self:
-        return list(cls)[idx]
+from typedefs import Command
 
 
 @final

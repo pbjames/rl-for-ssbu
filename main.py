@@ -1,32 +1,43 @@
+import logging
+import logging.config
 from pathlib import Path
 
 import rich
 import typer
 from sb3_contrib import RecurrentPPO
-from stable_baselines3.common.evaluation import evaluate_policy  # pyright: ignore[reportUnknownVariableType] fmt: skip
+from stable_baselines3.common.evaluation import evaluate_policy
 
-from consts import PLUGIN_FILE_NAME, PLUGINS_BASE
-from env import RewardComponentLoggingCallback, make_env
-from model import default_model
+from consts import LOGGING_CONFIG, PLUGIN_FILE_NAME, PLUGINS_BASE
+from env import RewardComponentLoggingCallback
+from info_server import InfoServer
+from util import safe_load_model
 
 app = typer.Typer()
-
-
-def safe_load_model(path: Path | str, self_play: bool = False) -> RecurrentPPO:
-    env = make_env(self_play)
-    model = default_model(env)
-    try:
-        model = RecurrentPPO.load(path, env=env)
-    except FileNotFoundError:
-        rich.print("[green] Creating new model! 🤸")
-    except BaseException as e:
-        rich.print(f"[bold red] Model loading exception: {e}")
-    finally:
-        return model
+Path("logs").mkdir(exist_ok=True)
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger(__name__)
 
 
 @app.command()
-def train(timesteps: float = 2e6, infinite: bool = False, self_play: bool = False):
+def debug():
+    logger.debug("start debugging")
+    info = InfoServer()
+    queue = info.subscribe()
+    while True:
+        try:
+            info.step_game()
+            *_, state = queue.get()
+            print((state))
+        except (KeyboardInterrupt, EOFError):
+            rich.print("[yellow] Exit? (Y/n)")
+            if input().startswith("y"):
+                return
+
+
+@app.command()
+def train(
+    name: str, timesteps: float = 2e6, infinite: bool = False, self_play: bool = False
+):
     def learning_config(model: RecurrentPPO):
         model.learn(
             total_timesteps=int(timesteps),
@@ -34,17 +45,17 @@ def train(timesteps: float = 2e6, infinite: bool = False, self_play: bool = Fals
             callback=RewardComponentLoggingCallback(),
         )
 
-    model = safe_load_model("ppo_lstm", self_play)
+    model = safe_load_model(name, name if self_play else "")
     learning_config(model)
-    model.save("ppo_lstm")
+    model.save(name)
     while infinite:
         learning_config(model)
-        model.save("ppo_lstm")
+        model.save(name)
 
 
 @app.command()
-def evaluate(episodes: int = 10):
-    model = safe_load_model("ppo_lstm")
+def evaluate(name: str, episodes: int = 10):
+    model = safe_load_model(__name__)
     env = model.get_env()
     if env is None:
         raise ValueError("Model with no VecEnv")
@@ -61,11 +72,7 @@ def toggle():
         rich.print("[bold yellow]Plugin OFF")
     else:
         other.rename(original)
-        print("[bold green]Plugin ON")
-
-
-# @app.callback(invoke_without_command=True)
-# def main(ctx: typer.Context): ...
+        rich.print("[bold green]Plugin ON")
 
 
 if __name__ == "__main__":
