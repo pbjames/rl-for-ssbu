@@ -1,6 +1,6 @@
 import logging
 from copy import deepcopy
-from typing import Any, TypedDict, final, override
+from typing import Any, final, override
 
 import numpy as np
 from gymnasium import Env, Wrapper
@@ -16,6 +16,7 @@ from info_server import InfoServer
 from typedefs import EventInfo
 from structs import Message, Situation, Status, into_dict
 from typedefs import Command, Info, InfoRewardComponents
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
         self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
         self._info: Info = {
             "reward_components": {
-                "continuous": 0.0,
+                "center_control": 0.0,
                 "death": 0.0,
                 "kill": 0.0,
                 "damage_taken": 0.0,
@@ -49,7 +50,7 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
             int(GAMEPAD_STICK_ARR[action[2]]),
         )
 
-    def process_event_rewards(
+    def _process_event_rewards(
         self, events: list[EventInfo], state: Message
     ) -> tuple[float, bool]:
         reward = 0
@@ -73,12 +74,13 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
                     pass
         return reward, False
 
-    def process_state_rewards(self, old: Message, new: Message) -> float:
+    def _process_state_rewards(self, old: Message, new: Message) -> float:
         reward = 0.0
         old_dist_from_center = sum(x**2 for x in old.cpu.location)
         dist_from_center = sum(x**2 for x in new.cpu.location)
         if dist_from_center < old_dist_from_center:
             reward += 0.001
+            self._info["reward_components"]["center_control"] += 0.001
         opp_damage_taken = new.opp.damage - old.opp.damage
         cpu_damage_taken = new.cpu.damage - old.cpu.damage
         reward += (cpu_damage_taken - opp_damage_taken) * REWARD_DMG_SCALE
@@ -103,8 +105,8 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
         self._info_server.step_game()
         terminate = truncated = False
         *events, state = self._events.get()
-        reward, terminate = self.process_event_rewards(events, state)
-        reward += self.process_state_rewards(old_state, state)
+        reward, terminate = self._process_event_rewards(events, state)
+        reward += self._process_state_rewards(old_state, state)
         d = into_dict(state, int_enums=True)
         return d, reward, terminate, truncated, self._info
 
@@ -130,13 +132,13 @@ class SSBUSelfPlay(Wrapper):
             int(GAMEPAD_STICK_ARR[action[2]]),
         )
 
-    def reload(self):
+    def _reload(self):
         self._model = RecurrentPPO.load(self.name)
         self._last_seen_obs = {}
         self._episode_starts = np.ones((self._num_envs,), dtype=bool)
         self._lstm_states = None
 
-    def observe(self, d: dict[str, Any]):
+    def _observe(self, d: dict[str, Any]):
         self._last_seen_obs = deepcopy(d)
         self._last_seen_obs["cpu"], self._last_seen_obs["opp"] = (
             self._last_seen_obs["opp"],
@@ -146,7 +148,7 @@ class SSBUSelfPlay(Wrapper):
     @override
     def reset(self, *, seed=None, options=None):
         d, info = self.env.reset()
-        self.reload()
+        self._reload()
         return d, info
 
     @override
@@ -161,7 +163,7 @@ class SSBUSelfPlay(Wrapper):
         )
         self._execute_action(action)
         d, reward, terminated, truncated, info = self.env.step(action)
-        self.observe(d)
+        self._observe(d)
         return d, reward, terminated, truncated, info
 
 
