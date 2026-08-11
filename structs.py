@@ -9,7 +9,7 @@ from msgspec import Struct
 
 Location = tuple[float, float, float]
 Primitive = float | Location | str | bool | int
-StructDiff = tuple[*tuple[str, ...], tuple[Primitive, Primitive]]
+StructDict = dict[str, Primitive]
 
 
 class Situation(StrEnum):

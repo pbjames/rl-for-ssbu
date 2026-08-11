@@ -43,6 +43,7 @@ def train(
             total_timesteps=int(timesteps),
             progress_bar=True,
             callback=RewardComponentLoggingCallback(),
+            log_interval=1,
         )
 
     model = safe_load_model(name, name if self_play else "")

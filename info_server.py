@@ -95,7 +95,7 @@ class InfoServer:
         buffer += part
         if buffer.endswith(END_MAGIC):
             try:
-                self._process_new_state(decoder.decode(buffer[:-len(END_MAGIC)]))
+                self._process_new_state(decoder.decode(buffer[: -len(END_MAGIC)]))
                 return b""
             except msgspec.DecodeError as e:
                 raise e
@@ -109,9 +109,6 @@ class InfoServer:
         self._handle_client(reader)
         logger.debug("sending ACK -> remote")
         self._client_sock.sendall(ACK_MAGIC)
-        logger.debug("waiting on remote -> SYN")
-        syn = reader.read(3)
-        logger.debug(f"Got {syn=}")
 
     def close_sockets(self):
         if self._server_conn is not None:

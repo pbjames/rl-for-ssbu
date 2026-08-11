@@ -19,19 +19,21 @@ class EventInfo(Enum):
     STATE_CHANGE = "state_change"
 
 
+def default_info() -> InfoDict:
+    return {
+        "reward_components": {
+            "center_control": 0.0,
+            "death": 0.0,
+            "kill": 0.0,
+            "damage_taken": 0.0,
+            "damage_dealt": 0.0,
+            "recovery": 0.0,
+        }
+    }
+
+
 EventQueue = queue.Queue[tuple[*tuple[EventInfo, ...], Message]]
-
-
-class Info(TypedDict):
-    reward_components: InfoRewardComponents
-
-
-class InfoRewardComponents(TypedDict):
-    center_control: float
-    death: float
-    kill: float
-    damage_taken: float
-    damage_dealt: float
+InfoDict = dict[str, dict[str, float]]
 
 
 class Command(Enum):

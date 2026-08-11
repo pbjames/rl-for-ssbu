@@ -1,5 +1,6 @@
 import logging
 from copy import deepcopy
+from functools import cache
 from typing import Any, final, override
 
 import numpy as np
@@ -13,37 +14,27 @@ from consts import (GAMEPAD_STICK_ARR, GAMEPAD_STICK_RES, REWARD_DMG_SCALE,
                     REWARD_HIT, REWARD_KO)
 from gamepad import ControllerAgent
 from info_server import InfoServer
-from typedefs import EventInfo
-from structs import Message, Situation, Status, into_dict
-from typedefs import Command, Info, InfoRewardComponents
+from structs import Message, Situation, Status, StructDict, into_dict
+from typedefs import Command, EventInfo, InfoDict, default_info
 
 
 logger = logging.getLogger(__name__)
 
 
 @final
-class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
+class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
     def __init__(self):
         super(SSBUEnv, self).__init__()
         self.controller = ControllerAgent()
         self._info_server = InfoServer()
         self._events = self._info_server.subscribe()
         self.action_space = MultiDiscrete(
-            np.array([len(list(Command)), GAMEPAD_STICK_RES, GAMEPAD_STICK_RES])
+            [len(list(Command)), GAMEPAD_STICK_RES, GAMEPAD_STICK_RES]
         )
         self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
-        self._info: Info = {
-            "reward_components": {
-                "center_control": 0.0,
-                "death": 0.0,
-                "kill": 0.0,
-                "damage_taken": 0.0,
-                "damage_dealt": 0.0,
-            }
-        }
 
     def _execute_action(self, action: NDArray[np.integer]):
-        command: Command = Command.by_index(action[0])  # pyright: ignore[reportAny]
+        command: Command = Command.by_index(int(action[0]))  # pyright: ignore[reportAny]
         self.controller.execute(
             command,
             int(GAMEPAD_STICK_ARR[action[1]]),
@@ -51,69 +42,84 @@ class SSBUEnv(Env[dict[str, Any], NDArray[np.integer]]):
         )
 
     def _process_event_rewards(
-        self, events: list[EventInfo], state: Message
+        self, events: list[EventInfo], info: InfoDict
     ) -> tuple[float, bool]:
         reward = 0
         for event in events:
             match event:
                 case EventInfo.CPU_KO:
                     reward -= REWARD_KO * 2
-                    self._info["reward_components"]["death"] -= REWARD_KO * 2
+                    info["reward_components"]["death"] -= REWARD_KO * 2
                 case EventInfo.OPP_KO:
-                    reward += REWARD_KO
-                    self._info["reward_components"]["kill"] += REWARD_KO * 2
+                    reward += REWARD_KO * 2
+                    info["reward_components"]["kill"] += REWARD_KO * 2
                 case EventInfo.CPU_TOOK_DMG:
                     reward -= -REWARD_HIT
-                    self._info["reward_components"]["damage_taken"] -= REWARD_HIT
+                    info["reward_components"]["damage_taken"] -= REWARD_HIT
                 case EventInfo.OPP_TOOK_DMG:
                     reward += REWARD_HIT
-                    self._info["reward_components"]["damage_dealt"] += REWARD_HIT
+                    info["reward_components"]["damage_dealt"] += REWARD_HIT
                 case EventInfo.GAME_OVER:
                     return reward, True
                 case EventInfo.STATE_CHANGE:
                     pass
         return reward, False
 
-    def _process_state_rewards(self, old: Message, new: Message) -> float:
+    def _process_state_rewards(
+        self, old: Message, new: Message, info: InfoDict
+    ) -> float:
         reward = 0.0
         old_dist_from_center = sum(x**2 for x in old.cpu.location)
         dist_from_center = sum(x**2 for x in new.cpu.location)
         if dist_from_center < old_dist_from_center:
-            reward += 0.001
-            self._info["reward_components"]["center_control"] += 0.001
-        opp_damage_taken = new.opp.damage - old.opp.damage
-        cpu_damage_taken = new.cpu.damage - old.cpu.damage
+            center_reward = 0.01
+            if old.cpu.location[0] < 0:
+                center_reward *= 5
+            info["reward_components"]["center_control"] += center_reward
+        opp_damage_taken = (
+            new.opp.damage - old.opp.damage if new.opp.situation != "Outfield" else 0
+        )
+        cpu_damage_taken = (
+            new.cpu.damage - old.cpu.damage if new.cpu.situation != "Outfield" else 0
+        )
         reward += (cpu_damage_taken - opp_damage_taken) * REWARD_DMG_SCALE
         return reward
 
     @override
     def reset(
         self, *, seed: int | None = None, options: dict[str, None] | None = None
-    ) -> tuple[dict[str, Any], Info]:
-        super().reset(seed=seed)
+    ) -> tuple[StructDict, InfoDict]:
+        super().reset(seed=seed, options=options)
         d = into_dict(Message.default(), int_enums=True)
-        for k in self._info["reward_components"]:
-            self._info["reward_components"][k] = 0.0
-        return d, self._info
+        return d, default_info()
 
     @override
     def step(
         self, action: NDArray[np.integer]
-    ) -> tuple[dict[str, Any], float, bool, bool, Info]:
+    ) -> tuple[StructDict, float, bool, bool, InfoDict]:
         old_state = self._info_server.state
         self._execute_action(action)
         self._info_server.step_game()
         terminate = truncated = False
         *events, state = self._events.get()
-        reward, terminate = self._process_event_rewards(events, state)
-        reward += self._process_state_rewards(old_state, state)
+        info = default_info()
+        reward, terminate = self._process_event_rewards(events, info)
+        # reward *= -1 if self.us_p1 else 1
+        reward += self._process_state_rewards(old_state, state, info)
         d = into_dict(state, int_enums=True)
-        return d, reward, terminate, truncated, self._info
+        return d, reward, terminate, truncated, info
 
 
 @final
-class SSBUSelfPlay(Wrapper):
-    def __init__[T, U](self, env: Env[T, U], controller: ControllerAgent, name: str):
+class SSBUSelfPlay(
+    Wrapper[StructDict, NDArray[np.integer], StructDict, NDArray[np.integer]]
+):
+    def __init__(
+        self,
+        env: Env[StructDict, NDArray[np.integer]],
+        controller: ControllerAgent,
+        name: str,
+    ):
         super().__init__(env)
         self.controller = controller
         self.name = name
@@ -138,7 +144,7 @@ class SSBUSelfPlay(Wrapper):
         self._episode_starts = np.ones((self._num_envs,), dtype=bool)
         self._lstm_states = None
 
-    def _observe(self, d: dict[str, Any]):
+    def _observe(self, d: StructDict):
         self._last_seen_obs = deepcopy(d)
         self._last_seen_obs["cpu"], self._last_seen_obs["opp"] = (
             self._last_seen_obs["opp"],
@@ -146,7 +152,7 @@ class SSBUSelfPlay(Wrapper):
         )
 
     @override
-    def reset(self, *, seed=None, options=None):
+    def reset(self, *, seed: int | None = None, options: dict[str, None] | None = None):
         d, info = self.env.reset()
         self._reload()
         return d, info
@@ -168,8 +174,8 @@ class SSBUSelfPlay(Wrapper):
 
 
 @final
-class SkipStepWrapper(Wrapper):
-    def __init__[T, U](self, env: Env[T, U], skip: int = 5):
+class SkipStepWrapper(Wrapper[StructDict, NDArray[np.integer], StructDict, NDArray[np.integer]]):
+    def __init__(self, env: Env[StructDict, NDArray[np.integer]], skip: int = 6):
         super().__init__(env)
         self.skip = skip
 
@@ -177,26 +183,29 @@ class SkipStepWrapper(Wrapper):
     def step(self, action: NDArray[np.integer]):
         total_reward = 0.0
         terminated = truncated = False
-        info = {}
+        info: InfoDict = default_info()
         obs = into_dict(Message.default(), int_enums=True)
         for _ in range(self.skip):
             obs, reward, terminated, truncated, info = self.env.step(action)
-            total_reward += reward  # pyright: ignore[reportOperatorIssue]
+            total_reward += float(reward)
             if terminated or truncated:
                 break
         return obs, total_reward, terminated, truncated, info
 
 
 class RewardComponentLoggingCallback(BaseCallback):
+    @staticmethod
+    @cache
+    def info_keys():
+        return default_info()["reward_components"].keys()
+    
     @override
     def _on_step(self) -> bool:
-        infos: list[dict[str, Any]] = self.locals["infos"]
-
-        for key in InfoRewardComponents.__required_keys__:
+        infos: list[InfoDict] = self.locals["infos"]  # pyright: ignore[reportAny]
+        for key in self.info_keys():
             values = [info["reward_components"][key] for info in infos]
             if values:
                 self.logger.record(f"reward/{key}", np.sum(values))
-
         return True
 
 
