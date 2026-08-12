@@ -36,7 +36,11 @@ def debug():
 
 @app.command()
 def train(
-    name: str, timesteps: float = 2e6, infinite: bool = False, self_play: bool = False
+    name: str,
+    timesteps: float = 24000,
+    infinite: bool = False,
+    self_play: bool = False,
+    experiment: bool = False,
 ):
     def learning_config(model: RecurrentPPO):
         model.learn(
@@ -45,8 +49,8 @@ def train(
             callback=RewardComponentLoggingCallback(),
             log_interval=1,
         )
-
-    model = safe_load_model(name, name if self_play else "")
+    path = Path(name)
+    model = safe_load_model(path, self_play, experiment=experiment)
     learning_config(model)
     model.save(name)
     while infinite:
@@ -56,7 +60,7 @@ def train(
 
 @app.command()
 def evaluate(name: str, episodes: int = 10):
-    model = safe_load_model(__name__)
+    model = safe_load_model(Path(name))
     env = model.get_env()
     if env is None:
         raise ValueError("Model with no VecEnv")

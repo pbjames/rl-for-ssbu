@@ -1,6 +1,7 @@
 import logging
 from copy import deepcopy
 from functools import cache
+from pathlib import Path
 from typing import Any, final, override
 
 import numpy as np
@@ -10,8 +11,13 @@ from numpy.typing import NDArray
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import BaseCallback
 
-from consts import (GAMEPAD_STICK_ARR, GAMEPAD_STICK_RES, REWARD_DMG_SCALE,
-                    REWARD_HIT, REWARD_KO)
+from consts import (
+    GAMEPAD_STICK_ARR,
+    GAMEPAD_STICK_RES,
+    REWARD_DMG_SCALE,
+    REWARD_HIT,
+    REWARD_KO,
+)
 from gamepad import ControllerAgent
 from info_server import InfoServer
 from structs import Message, Situation, Status, StructDict, into_dict
@@ -23,11 +29,13 @@ logger = logging.getLogger(__name__)
 
 @final
 class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
-    def __init__(self):
+    def __init__(self, us_p1: bool = False):
         super(SSBUEnv, self).__init__()
         self.controller = ControllerAgent()
         self._info_server = InfoServer()
         self._events = self._info_server.subscribe()
+        self.us_p1 = us_p1
+        self.info = default_info()
         self.action_space = MultiDiscrete(
             [len(list(Command)), GAMEPAD_STICK_RES, GAMEPAD_STICK_RES]
         )
@@ -91,23 +99,26 @@ class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
     ) -> tuple[StructDict, InfoDict]:
         super().reset(seed=seed, options=options)
         d = into_dict(Message.default(), int_enums=True)
-        return d, default_info()
+        self.info = default_info()
+        return d, self.info
 
     @override
     def step(
         self, action: NDArray[np.integer]
     ) -> tuple[StructDict, float, bool, bool, InfoDict]:
-        old_state = self._info_server.state
+        old_state = deepcopy(self._info_server.state)
         self._execute_action(action)
         self._info_server.step_game()
         terminate = truncated = False
         *events, state = self._events.get()
-        info = default_info()
-        reward, terminate = self._process_event_rewards(events, info)
-        # reward *= -1 if self.us_p1 else 1
-        reward += self._process_state_rewards(old_state, state, info)
+        reward, terminate = self._process_event_rewards(events, self.info)
+        if self.us_p1:
+            reward *= -1
+            old_state.cpu, old_state.opp = old_state.opp, old_state.cpu
+            state.cpu, state.opp = state.opp, state.cpu
+        reward += self._process_state_rewards(old_state, state, self.info)
         d = into_dict(state, int_enums=True)
-        return d, reward, terminate, truncated, info
+        return d, reward, terminate, truncated, self.info
 
 
 @final
@@ -117,12 +128,12 @@ class SSBUSelfPlay(
     def __init__(
         self,
         env: Env[StructDict, NDArray[np.integer]],
+        path: Path,
         controller: ControllerAgent,
-        name: str,
     ):
         super().__init__(env)
         self.controller = controller
-        self.name = name
+        self.name = path
         self._model = RecurrentPPO.load("ppo_lstm")
         self._lstm_states = None
         self.observation_space = Dict(into_dict_obs(into_dict(Message.default())))
@@ -174,7 +185,9 @@ class SSBUSelfPlay(
 
 
 @final
-class SkipStepWrapper(Wrapper[StructDict, NDArray[np.integer], StructDict, NDArray[np.integer]]):
+class SkipStepWrapper(
+    Wrapper[StructDict, NDArray[np.integer], StructDict, NDArray[np.integer]]
+):
     def __init__(self, env: Env[StructDict, NDArray[np.integer]], skip: int = 6):
         super().__init__(env)
         self.skip = skip
@@ -198,7 +211,7 @@ class RewardComponentLoggingCallback(BaseCallback):
     @cache
     def info_keys():
         return default_info()["reward_components"].keys()
-    
+
     @override
     def _on_step(self) -> bool:
         infos: list[InfoDict] = self.locals["infos"]  # pyright: ignore[reportAny]
