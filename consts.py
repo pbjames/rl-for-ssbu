@@ -22,7 +22,6 @@ PLUGINS_BASE: Final[Path] = (
     / "plugins"
 )
 PLUGIN_FILE_NAME: Final[str] = "libsmash_cpu_info.nro"
-REWARD_LOSS: Final[int] = -30
 REWARD_KO: Final[int] = 30
 REWARD_WIN: Final[int] = 100
 REWARD_HIT: Final[float] = 1

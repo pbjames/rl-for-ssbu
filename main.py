@@ -49,6 +49,7 @@ def train(
             callback=RewardComponentLoggingCallback(),
             log_interval=1,
         )
+
     path = Path(name)
     model = safe_load_model(path, self_play, experiment=experiment)
     learning_config(model)

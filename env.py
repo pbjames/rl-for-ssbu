@@ -29,12 +29,11 @@ logger = logging.getLogger(__name__)
 
 @final
 class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
-    def __init__(self, us_p1: bool = False):
+    def __init__(self):
         super(SSBUEnv, self).__init__()
         self.controller = ControllerAgent()
         self._info_server = InfoServer()
         self._events = self._info_server.subscribe()
-        self.us_p1 = us_p1
         self.info = default_info()
         self.action_space = MultiDiscrete(
             [len(list(Command)), GAMEPAD_STICK_RES, GAMEPAD_STICK_RES]
@@ -56,11 +55,11 @@ class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
         for event in events:
             match event:
                 case EventInfo.CPU_KO:
-                    reward -= REWARD_KO * 2
-                    info["reward_components"]["death"] -= REWARD_KO * 2
+                    reward -= REWARD_KO
+                    info["reward_components"]["death"] -= REWARD_KO
                 case EventInfo.OPP_KO:
-                    reward += REWARD_KO * 2
-                    info["reward_components"]["kill"] += REWARD_KO * 2
+                    reward += REWARD_KO
+                    info["reward_components"]["kill"] += REWARD_KO
                 case EventInfo.CPU_TOOK_DMG:
                     reward -= -REWARD_HIT
                     info["reward_components"]["damage_taken"] -= REWARD_HIT
@@ -112,10 +111,6 @@ class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
         terminate = truncated = False
         *events, state = self._events.get()
         reward, terminate = self._process_event_rewards(events, self.info)
-        if self.us_p1:
-            reward *= -1
-            old_state.cpu, old_state.opp = old_state.opp, old_state.cpu
-            state.cpu, state.opp = state.opp, state.cpu
         reward += self._process_state_rewards(old_state, state, self.info)
         d = into_dict(state, int_enums=True)
         return d, reward, terminate, truncated, self.info
