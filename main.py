@@ -7,13 +7,13 @@ import typer
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.evaluation import evaluate_policy
 
-from consts import LOGGING_CONFIG, PLUGIN_FILE_NAME, PLUGINS_BASE
+from consts import HOST, LOG_PATH, LOGGING_CONFIG, PLUGIN_FILE_NAME, PLUGINS_BASE
 from env import RewardComponentLoggingCallback
 from info_server import InfoServer
 from util import safe_load_model
 
 app = typer.Typer()
-Path("logs").mkdir(exist_ok=True)
+LOG_PATH.mkdir(exist_ok=True)
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 @app.command()
 def debug():
     logger.debug("start debugging")
-    info = InfoServer()
+    info = InfoServer(*HOST)
     queue = info.subscribe()
     while True:
         try:
@@ -40,7 +40,7 @@ def train(
     timesteps: float = 24000,
     infinite: bool = False,
     self_play: bool = False,
-    experiment: bool = False,
+    cpu_play: bool = False,
 ):
     def learning_config(model: RecurrentPPO):
         model.learn(
@@ -51,7 +51,7 @@ def train(
         )
 
     path = Path(name)
-    model = safe_load_model(path, self_play, experiment=experiment)
+    model = safe_load_model(path, self_play, cpu_play=cpu_play)
     learning_config(model)
     model.save(name)
     while infinite:

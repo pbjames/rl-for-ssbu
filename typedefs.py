@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import queue
 from enum import Enum
 from functools import cache
-from typing import Self, TypedDict
+from typing import Self
 
 from vgamepad import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs]
-import queue
 
 from structs import Message
 
@@ -27,7 +27,7 @@ def default_info() -> InfoDict:
             "kill": 0.0,
             "damage_taken": 0.0,
             "damage_dealt": 0.0,
-            "recovery": 0.0,
+            "total": 0.0,
         }
     }
 

@@ -4,8 +4,10 @@ from typing import Any, Final
 import numpy as np
 from numpy.typing import NDArray
 
+LOG_PATH: Final[Path] = Path("logs")
 REMOTE_HOST: Final[tuple[str, int]] = "127.0.0.1", 65002
 HOST: Final[tuple[str, int]] = "127.0.0.1", 7878
+GAME_OVER_STAGE: Final[int] = 310
 END_MAGIC: Final[bytes] = b"END"
 ACK_MAGIC: Final[bytes] = b"AC\n"
 PLUGINS_BASE: Final[Path] = (

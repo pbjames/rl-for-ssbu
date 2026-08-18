@@ -2,7 +2,7 @@ import logging
 from copy import deepcopy
 from functools import cache
 from pathlib import Path
-from typing import Any, final, override
+from typing import Any, cast, final, override
 
 import numpy as np
 from gymnasium import Env, Wrapper
@@ -10,29 +10,24 @@ from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Space, flatten
 from numpy.typing import NDArray
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.logger import TensorBoardOutputFormat
 
-from consts import (
-    GAMEPAD_STICK_ARR,
-    GAMEPAD_STICK_RES,
-    REWARD_DMG_SCALE,
-    REWARD_HIT,
-    REWARD_KO,
-)
+from consts import (GAMEPAD_STICK_ARR, GAMEPAD_STICK_RES, REWARD_DMG_SCALE,
+                    REWARD_HIT, REWARD_KO)
 from gamepad import ControllerAgent
 from info_server import InfoServer
 from structs import Message, Situation, Status, StructDict, into_dict
 from typedefs import Command, EventInfo, InfoDict, default_info
-
 
 logger = logging.getLogger(__name__)
 
 
 @final
 class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
-    def __init__(self):
+    def __init__(self, addr: str, port: int):
         super(SSBUEnv, self).__init__()
         self.controller = ControllerAgent()
-        self._info_server = InfoServer()
+        self._info_server = InfoServer(addr, port)
         self._events = self._info_server.subscribe()
         self.info = default_info()
         self.action_space = MultiDiscrete(
@@ -113,6 +108,9 @@ class SSBUEnv(Env[StructDict, NDArray[np.integer]]):
         reward, terminate = self._process_event_rewards(events, self.info)
         reward += self._process_state_rewards(old_state, state, self.info)
         d = into_dict(state, int_enums=True)
+        self.info["reward_components"]["total"] = sum(
+            v for k, v in self.info["reward_components"].items() if k != "total"
+        )
         return d, reward, terminate, truncated, self.info
 
 
@@ -168,7 +166,10 @@ class SSBUSelfPlay(
         if not self._last_seen_obs:
             return self.env.step(action)
         action, self._lstm_states = self._model.predict(
-            flatten(self.observation_space, self._last_seen_obs),  # pyright: ignore[reportArgumentType]
+            cast(
+                NDArray[np.integer],
+                flatten(self.observation_space, self._last_seen_obs),
+            ),
             state=self._lstm_states,
             episode_start=self._episode_starts,
             deterministic=False,
@@ -202,14 +203,39 @@ class SkipStepWrapper(
 
 
 class RewardComponentLoggingCallback(BaseCallback):
+    mean_total_reward: float = 0
+
     @staticmethod
     @cache
     def info_keys():
         return default_info()["reward_components"].keys()
 
+    def log_total_reward_by_run(self) -> None:
+        if self.mean_total_reward == 0:
+            return
+        output_formats = self.logger.output_formats
+        tb_formatter = next(
+            f for f in output_formats if isinstance(f, TensorBoardOutputFormat)
+        )
+        writer = tb_formatter.writer
+        full_path = cast(str, tb_formatter.writer.log_dir)
+        run_id = int(full_path.rsplit("_", 1)[-1])
+        writer.add_scalar("progression", self.mean_total_reward, run_id)
+        self.mean_total_reward = 0
+
+    def update_mean_total_reward(self, infos: list[InfoDict]):
+        timesteps = self.num_timesteps
+        for info in infos:
+            reward_diff = info["reward_components"]["total"] - self.mean_total_reward
+            self.mean_total_reward += (1 / timesteps) * reward_diff
+
     @override
     def _on_step(self) -> bool:
-        infos: list[InfoDict] = self.locals["infos"]  # pyright: ignore[reportAny]
+        infos: list[InfoDict] = cast(list[InfoDict], self.locals["infos"])
+        dones: list[bool] = cast(list[bool], self.locals["dones"])
+        if all(dones):
+            self.log_total_reward_by_run()
+        self.update_mean_total_reward(infos)
         for key in self.info_keys():
             values = [info["reward_components"][key] for info in infos]
             if values:

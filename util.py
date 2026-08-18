@@ -5,6 +5,7 @@ import rich
 from gymnasium.wrappers import FlattenObservation, TimeLimit
 from sb3_contrib import RecurrentPPO
 
+from consts import HOST
 from env import SkipStepWrapper, SSBUEnv, SSBUSelfPlay
 from gamepad import ControllerAgent
 from model import default_model
@@ -16,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def make_env(
-    path: Path, self_play: bool, experiment: bool
+    path: Path, self_play: bool, cpu_play: bool
 ) -> TimeLimit[StructDict, NDArray[np.integer]]:
-    env = SSBUEnv()
-    if experiment:
+    env = SSBUEnv(*HOST)
+    if cpu_play:
         env.controller.simulate_classroom_with_cpu()
     else:
         input("Press enter after going to the smash character selection menu.")
@@ -40,7 +41,7 @@ def make_env(
             max_episode_steps=24000,
         )
     else:
-        if not experiment:
+        if not cpu_play:
             env.controller.marth_selection_sequence()
             input("Press enter after starting the game")
         return TimeLimit(
@@ -52,9 +53,9 @@ def make_env(
 
 
 def safe_load_model(
-    path: Path, self_play: bool = False, experiment: bool = False
+    path: Path, self_play: bool = False, cpu_play: bool = False
 ) -> RecurrentPPO:
-    env = make_env(path, self_play, experiment)
+    env = make_env(path, self_play, cpu_play)
     try:
         return RecurrentPPO.load(path, env=env)
     except FileNotFoundError:

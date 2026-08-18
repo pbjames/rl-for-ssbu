@@ -95,8 +95,7 @@ class ControllerAgent:
         self.use_lstick(0, 0, hold=False, release=False)
         self.use_button(XUSB_BUTTON.XUSB_GAMEPAD_B, hold=False, release=False)
 
-    def simulate_classroom_with_cpu(self):
-        input("connect thing")
+    def goto_battlefield(self):
         self.gamepad.reset()
         self.gamepad.update()
         self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
@@ -146,13 +145,8 @@ class ControllerAgent:
         time.sleep(0.5)
         self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
         self.gamepad.update()
-        time.sleep(3)
-        self.marth_selection_sequence()
-        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
-        self.gamepad.update()
-        time.sleep(0.5)
-        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
-        self.gamepad.update()
+
+    def set_cpu_marth(self):
         self.gamepad.left_joystick(-32768, -32768)
         self.gamepad.update()
         time.sleep(3)
@@ -168,6 +162,19 @@ class ControllerAgent:
         self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
         self.gamepad.update()
         self.marth_selection_sequence()
+
+
+    def simulate_classroom_with_cpu(self):
+        input("connect thing")
+        self.goto_battlefield()
+        time.sleep(3)
+        self.marth_selection_sequence()
+        self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
+        self.gamepad.update()
+        time.sleep(0.5)
+        self.gamepad.release_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
+        self.gamepad.update()
+        self.set_cpu_marth()
         self.gamepad.press_button(XUSB_BUTTON.XUSB_GAMEPAD_B)
         self.gamepad.update()
         time.sleep(0.5)
