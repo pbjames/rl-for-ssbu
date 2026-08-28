@@ -10,6 +10,11 @@ from vgamepad import XUSB_BUTTON  # pyright: ignore[reportMissingTypeStubs]
 from structs import Message
 
 
+class Ruleset(Enum):
+    INFINITE = 0
+    THREESTK = 1
+
+
 class EventInfo(Enum):
     CPU_KO = "cpu_ko"
     OPP_KO = "opp_ko"

@@ -1,6 +1,7 @@
 import logging
 import logging.config
 from pathlib import Path
+from pprint import pformat
 
 import rich
 import typer
@@ -10,6 +11,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from consts import HOST, LOG_PATH, LOGGING_CONFIG, PLUGIN_FILE_NAME, PLUGINS_BASE
 from env import RewardComponentLoggingCallback
 from info_server import InfoServer
+from structs import into_dict
 from util import safe_load_model
 
 app = typer.Typer()
@@ -27,9 +29,9 @@ def debug():
         try:
             info.step_game()
             *_, state = queue.get()
-            print((state))
+            rich.print(pformat(into_dict(state)))
         except (KeyboardInterrupt, EOFError):
-            rich.print("[yellow] Exit? (Y/n)")
+            rich.print("[yellow] Exit? (Y/n): ")
             if input().startswith("y"):
                 return
 

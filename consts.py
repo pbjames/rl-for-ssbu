@@ -4,6 +4,9 @@ from typing import Any, Final
 import numpy as np
 from numpy.typing import NDArray
 
+GAME_PATH: Final[Path] = Path(
+    "/home/james/Documents/NintendoSwitch/Super Smash Bros Ultimate[01006A800016E000] [US] [v0].nsp"
+)
 LOG_PATH: Final[Path] = Path("logs")
 REMOTE_HOST: Final[tuple[str, int]] = "127.0.0.1", 65002
 HOST: Final[tuple[str, int]] = "127.0.0.1", 7878

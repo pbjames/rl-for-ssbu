@@ -12,8 +12,13 @@ from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 
-from consts import (GAMEPAD_STICK_ARR, GAMEPAD_STICK_RES, REWARD_DMG_SCALE,
-                    REWARD_HIT, REWARD_KO)
+from consts import (
+    GAMEPAD_STICK_ARR,
+    GAMEPAD_STICK_RES,
+    REWARD_DMG_SCALE,
+    REWARD_HIT,
+    REWARD_KO,
+)
 from gamepad import ControllerAgent
 from info_server import InfoServer
 from structs import Message, Situation, Status, StructDict, into_dict

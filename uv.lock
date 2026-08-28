@@ -1106,6 +1106,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-statemachine"
+version = "3.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/ec/9600288c5cd4960bab1f20d2420d3a93845f278938bc70a6380edbcc807a/python_statemachine-3.2.1.tar.gz", hash = "sha256:dff36682cab00ba7f797e01ebdd90c4dbb2c2e00fe7cfcc9f926f63c50266507", size = 770078, upload-time = "2026-08-01T16:52:44.987Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/d5/e1dde86357f286b508f4b8241e2b634cf1c24ccaa3f2fe6a250a008f8d4c/python_statemachine-3.2.1-py3-none-any.whl", hash = "sha256:609b46fcc68f400affac42a2fe514a5b5e552cb859319475f91e1f08696d7759", size = 158637, upload-time = "2026-08-01T16:52:43.683Z" },
+]
+
+[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1165,6 +1174,7 @@ dependencies = [
     { name = "gymnasium" },
     { name = "msgspec" },
     { name = "numpy" },
+    { name = "python-statemachine" },
     { name = "rich" },
     { name = "sb3-contrib" },
     { name = "stable-baselines3", extra = ["extra"] },
@@ -1178,6 +1188,7 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=1.3.0" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "numpy", specifier = ">=2.5.1" },
+    { name = "python-statemachine", specifier = ">=3.2.1" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "sb3-contrib", specifier = ">=2.9.0" },
     { name = "stable-baselines3", extras = ["extra"], specifier = ">=2.9.0" },
